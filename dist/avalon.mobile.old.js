@@ -5,7 +5,7 @@
  http://weibo.com/jslouvre/
  
  Released under the MIT license
- avalon.mobile.old.js 1.46 built in 2015.8.24
+ avalon.mobile.old.js 1.46 built in 2015.9.11
  support IE8 and other browsers
  ==================================================*/
 (function(global, factory) {
@@ -539,6 +539,7 @@ var Cache = new function() {// jshint ignore:line
                     entry.newer =
                     entry.older =
                     this._keymap[entry.key] = void 0
+            delete this._keymap[entry.key] //#1029
         }
     }
     p.get = function(key) {
@@ -1855,6 +1856,9 @@ function injectDependency(list, data) {
         return
     if (list && avalon.Array.ensure(list, data) && data.element) {
         injectDisposeQueue(data, list)
+        if (new Date() - beginTime > 444 ) {
+            rejectDisposeQueue()
+        }
     }
 }
 
@@ -1893,16 +1897,13 @@ var disposeQueue = avalon.$$subscribers = []
 var beginTime = new Date()
 var oldInfo = {}
 //var uuid2Node = {}
-function getUid(obj, makeID) { //IE9+,标准浏览器
-    if (!obj.uuid && !makeID) {
-        obj.uuid = ++disposeCount
-        //uuid2Node[obj.uuid] = obj
+function getUid(elem, makeID) { //IE9+,标准浏览器
+    if (!elem.uuid && !makeID) {
+        elem.uuid = ++disposeCount
     }
-    return obj.uuid
+    return elem.uuid
 }
-//function getNode(uuid) {
-//    return uuid2Node[uuid]
-//}
+
 //添加到回收列队中
 function injectDisposeQueue(data, list) {
     var elem = data.element
@@ -1982,15 +1983,13 @@ function disposeData(data) {
 
 function shouldDispose(el) {
     try {//IE下，如果文本节点脱离DOM树，访问parentNode会报错
-        if (!el.parentNode) {
-            return true
-        }
+        var fireError = el.parentNode.nodeType
     } catch (e) {
         return true
     }
     if (el.ifRemove) {
         // 如果节点被放到ifGroup，才移除
-        if (!root.contains(el.ifRemove) && (ifGroup === ele.parentNode)) {
+        if (!root.contains(el.ifRemove) && (ifGroup === el.parentNode)) {
             el.parentNode && el.parentNode.removeChild(el)
             return true
         }
@@ -3035,6 +3034,7 @@ function scanAttr(elem, vmodels, match) {
         var bindings = []
         var fixAttrs = []
         var msData = {}
+        var uniq = {}
         for (var i = 0, attr; attr = attributes[i++]; ) {
             if (attr.specified) {
                 if (match = attr.name.match(rmsAttr)) {
@@ -3043,6 +3043,10 @@ function scanAttr(elem, vmodels, match) {
                     var param = match[2] || ""
                     var value = attr.value
                     var name = attr.name
+                    if (uniq[name]) {//IE8下ms-repeat,ms-with BUG
+                        continue
+                    }
+                    uniq[name] = 1
                     if (events[type]) {
                         param = type
                         type = "on"
@@ -3054,7 +3058,7 @@ function scanAttr(elem, vmodels, match) {
                         }
                         param = type
                         type = "attr"
-                        name = "ms-" + type + "-"+ param
+                        name = "ms-" + type + "-" + param
                         fixAttrs.push([attr.name, name, value])
                     }
                     msData[name] = value
@@ -3068,9 +3072,9 @@ function scanAttr(elem, vmodels, match) {
                             name: name,
                             value: newValue,
                             oneTime: oneTime,
-                            uuid: name+"-"+getUid(elem),
-                             //chrome与firefox下Number(param)得到的值不一样 #855
-                            priority:  (priorityMap[type] || type.charCodeAt(0) * 10 )+ (Number(param.replace(/\D/g, "")) || 0)
+                            uuid: name + "-" + getUid(elem),
+                            //chrome与firefox下Number(param)得到的值不一样 #855
+                            priority: (priorityMap[type] || type.charCodeAt(0) * 10) + (Number(param.replace(/\D/g, "")) || 0)
                         }
                         if (type === "html" || type === "text") {
                             var token = getToken(value)
@@ -3102,10 +3106,8 @@ function scanAttr(elem, vmodels, match) {
             })
             //http://bugs.jquery.com/ticket/7071
             //在IE下对VML读取type属性,会让此元素所有属性都变成<Failed>
-            if (hasDuplex) {
-                if (msData["ms-attr-value"] && elem.type === "text") {
-                    log("warning!一个控件不能同时定义ms-attr-value与" + hasDuplex)
-                }
+            if (hasDuplex && msData["ms-attr-value"] && !elem.scopeName && elem.type === "text") {
+                log("warning!一个控件不能同时定义ms-attr-value与" + hasDuplex)
             }
             for (i = 0; binding = bindings[i]; i++) {
                 type = binding.type
@@ -3127,7 +3129,7 @@ var rnoscanAttrBinding = /^if|widget|repeat$/
 var rnoscanNodeBinding = /^each|with|html|include$/
 //IE67下，在循环绑定中，一个节点如果是通过cloneNode得到，自定义属性的specified为false，无法进入里面的分支，
 //但如果我们去掉scanAttr中的attr.specified检测，一个元素会有80+个特性节点（因为它不区分固有属性与自定义属性），很容易卡死页面
-if (!"1" [0]) {
+if (!W3C) {
     var attrPool = new Cache(512)
     var rattrs = /\s+(ms-[^=\s]+)(?:=("[^"]*"|'[^']*'|[^\s>]+))?/g,
             rquote = /^['"]/,
@@ -3830,25 +3832,20 @@ duplexBinding.INPUT = function(element, evaluator, data) {
         }
         //当value变化时改变model的值
     var updateVModel = function() {
-        if (composing) //处理中文输入法在minlengh下引发的BUG
+        var val = element.value //防止递归调用形成死循环
+        if (composing || val === element.oldValue) //处理中文输入法在minlengh下引发的BUG
             return
-        var val = element.oldValue = element.value //防止递归调用形成死循环
         var lastValue = data.pipe(val, data, "get")
         if ($elem.data("duplexObserve") !== false) {
             evaluator(lastValue)
             callback.call(element, lastValue)
-            if ($elem.data("duplex-focus")) {
-                avalon.nextTick(function() {
-                    element.focus()
-                })
-            }
         }
     }
     //当model变化时,它就会改变value的值
     data.handler = function() {
-        var val = data.pipe(evaluator(), data, "set") + "" //fix #673
+        var val = data.pipe(evaluator(), data, "set") +"" //fix #673
         if (val !== element.oldValue) {
-            element.value = val
+            element.value = element.oldValue = val 
         }
     }
     if (data.isChecked || $type === "radio") {
@@ -5599,6 +5596,10 @@ new function () {// jshint ignore:line
         //5. 还原扩展名，query
         var urlNoQuery = url + ext
         url = urlNoQuery + this.query
+        urlNoQuery = url.replace(rquery, function (a) {
+            this.query = a
+            return ""
+        })
         //6. 处理urlArgs
         eachIndexArray(id, kernel.urlArgs, function (value) {
             url += (url.indexOf("?") === -1 ? "?" : "&") + value;

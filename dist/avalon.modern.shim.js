@@ -5,7 +5,7 @@
  http://weibo.com/jslouvre/
  
  Released under the MIT license
- avalon.modern.shim.js(无加载器版本) 1.46 built in 2015.8.24
+ avalon.modern.shim.js(无加载器版本) 1.46 built in 2015.9.11
  support IE10+ and other browsers
  ==================================================*/
 (function(global, factory) {
@@ -471,6 +471,7 @@ var Cache = new function() {// jshint ignore:line
                     entry.newer =
                     entry.older =
                     this._keymap[entry.key] = void 0
+            delete this._keymap[entry.key] //#1029
         }
     }
     p.get = function(key) {
@@ -1474,6 +1475,9 @@ function injectDependency(list, data) {
         return
     if (list && avalon.Array.ensure(list, data) && data.element) {
         injectDisposeQueue(data, list)
+        if (new Date() - beginTime > 444 ) {
+            rejectDisposeQueue()
+        }
     }
 }
 
@@ -1512,16 +1516,13 @@ var disposeQueue = avalon.$$subscribers = []
 var beginTime = new Date()
 var oldInfo = {}
 //var uuid2Node = {}
-function getUid(obj, makeID) { //IE9+,标准浏览器
-    if (!obj.uuid && !makeID) {
-        obj.uuid = ++disposeCount
-        //uuid2Node[obj.uuid] = obj
+function getUid(elem, makeID) { //IE9+,标准浏览器
+    if (!elem.uuid && !makeID) {
+        elem.uuid = ++disposeCount
     }
-    return obj.uuid
+    return elem.uuid
 }
-//function getNode(uuid) {
-//    return uuid2Node[uuid]
-//}
+
 //添加到回收列队中
 function injectDisposeQueue(data, list) {
     var elem = data.element
@@ -1601,15 +1602,13 @@ function disposeData(data) {
 
 function shouldDispose(el) {
     try {//IE下，如果文本节点脱离DOM树，访问parentNode会报错
-        if (!el.parentNode) {
-            return true
-        }
+        var fireError = el.parentNode.nodeType
     } catch (e) {
         return true
     }
     if (el.ifRemove) {
         // 如果节点被放到ifGroup，才移除
-        if (!root.contains(el.ifRemove) && (ifGroup === ele.parentNode)) {
+        if (!root.contains(el.ifRemove) && (ifGroup === el.parentNode)) {
             el.parentNode && el.parentNode.removeChild(el)
             return true
         }
@@ -2453,6 +2452,7 @@ function scanAttr(elem, vmodels, match) {
         var attributes = elem.attributes
         var bindings = []
         var fixAttrs = []
+        var uniq = {}
         var msData = createMap()
         for (var i = 0, attr; attr = attributes[i++]; ) {
             if (attr.specified) {
@@ -2462,6 +2462,10 @@ function scanAttr(elem, vmodels, match) {
                     var param = match[2] || ""
                     var value = attr.value
                     var name = attr.name
+                    if (uniq[name]) {//IE8下ms-repeat,ms-with BUG
+                        continue
+                    }
+                    uniq[name] = 1
                     if (events[type]) {
                         param = type
                         type = "on"
@@ -3186,25 +3190,20 @@ duplexBinding.INPUT = function(element, evaluator, data) {
         //当value变化时改变model的值
 
     var updateVModel = function() {
-        if (composing) //处理中文输入法在minlengh下引发的BUG
+        var val = element.value //防止递归调用形成死循环
+        if (composing || val === element.oldValue) //处理中文输入法在minlengh下引发的BUG
             return
-        var val = element.oldValue = element.value //防止递归调用形成死循环
         var lastValue = data.pipe(val, data, "get")
         if ($elem.data("duplexObserve") !== false) {
             evaluator(lastValue)
             callback.call(element, lastValue)
-            if ($elem.data("duplex-focus")) {
-                avalon.nextTick(function() {
-                    element.focus()
-                })
-            }
         }
     }
     //当model变化时,它就会改变value的值
     data.handler = function() {
         var val = data.pipe(evaluator(), data, "set") + ""
         if (val !== element.oldValue) {
-            element.value = val
+            element.value = element.oldValue = val
         }
     }
     if (data.isChecked || $type === "radio") {
